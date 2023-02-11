@@ -47,12 +47,15 @@ func (ms *MetaStore) Initialize(region string) {
 	for instanceTypeId := range ms.InstanceFamilyCache {
 		found := 0
 		for _, zoneStock := range zoneStocks {
-			for _, resource := range zoneStock.AvailableResources.AvailableResource[0].SupportedResources.SupportedResource {
-				if resource.Value == instanceTypeId {
-					found = 1
-					break
+			for _, availableResource := range zoneStock.AvailableResources.AvailableResource {
+				for _, resource := range availableResource.SupportedResources.SupportedResource {
+					if resource.Value == instanceTypeId {
+						found = 1
+						break
+					}
 				}
 			}
+
 			if found == 1 {
 				break
 			}
@@ -102,7 +105,7 @@ func (ms *MetaStore) FetchSpotPrices(instanceTypes []string, resolution int) (hi
 		req.IoOptimized = "optimized"
 		resp, err := ms.DescribeSpotPriceHistory(req)
 
-		resolutionDuration := time.Duration(resolution * -1*24) * time.Hour
+		resolutionDuration := time.Duration(resolution*-1*24) * time.Hour
 		req.StartTime = time.Now().Add(resolutionDuration).Format(TimeLayout)
 		if err != nil {
 			continue
@@ -148,16 +151,18 @@ func (ms *MetaStore) SpotPricesAnalysis(historyPrices map[string][]ecsService.Sp
 func (ms *MetaStore) PrintPriceRank(prices SortedInstancePrices, cutoff int, limit int) {
 	sort.Sort(prices)
 
-	color.Green("%30s %20s %15s %15s %15s\n", "InstanceTypeId", "ZoneId", "Price(Core)", "Discount", "ratio")
+	color.Green("%20s %20s %20s %10s %10s %8s %8s\n", "Zone", "InstanceTypeId", "ZoneId", "Price", "Price(Core)", "Discount", "ratio")
 
 	for index, price := range prices {
 		if index >= limit {
 			break
 		}
 		if price.Discount <= float64(cutoff) {
-			color.Green("%30s %20s %15.4f %15.1f %15.1f\n", price.InstanceTypeId, price.ZoneId, price.PricePerCore, price.Discount, price.Possibility)
+			color.Green("%20s %20s %20s %10s %10.4f %8.1f %8.1f\n",
+				price.ZoneId, price.InstanceTypeId+fmt.Sprintf("(%dC%dG)", price.CpuCoreCount, int(price.MemorySize)), price.ZoneId, price.Price, price.PricePerCore, price.Discount, price.Possibility)
 		} else {
-			color.Blue("%30s %20s %15.4f %15.1f %15.1f\n", price.InstanceTypeId, price.ZoneId, price.PricePerCore, price.Discount, price.Possibility)
+			color.Blue("%20s %20s %20s %10s %10.4f %8.1f %8.1f\n",
+				price.ZoneId, price.InstanceTypeId+fmt.Sprintf("(%dC%dG)", price.CpuCoreCount, int(price.MemorySize)), price.ZoneId, price.Price, price.PricePerCore, price.Discount, price.Possibility)
 		}
 	}
 }

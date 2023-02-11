@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	ecsService "github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
+	"strings"
 )
 
 var (
@@ -18,25 +19,64 @@ var (
 	cutoff          = flag.Int("cutoff", 2, "Discount of the spot instance prices")
 	limit           = flag.Int("limit", 20, "Limit of the spot instances")
 	resolution      = flag.Int("resolution", 7, "The window of price history analysis")
+	regions         = flag.String("regions", "", "The regions of spot instances, * / cn / cn,ap")
 )
 
 func main() {
 	flag.Parse()
 
-	client, err := ecsService.NewClientWithAccessKey(*region, *accessKeyId, *accessKeySecret)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to create ecs client,because of %v", err))
+	var regionList []string
+
+	if *regions != "" {
+		// 必须设置一个 regionId，否则无法正常调用
+		c, e := ecsService.NewClientWithAccessKey("cn-hangzhou", *accessKeyId, *accessKeySecret)
+		if e != nil {
+			panic(fmt.Sprintf("Failed to create ecs client,because of %v", e))
+		}
+		request := ecsService.CreateDescribeRegionsRequest()
+		response, err := c.DescribeRegions(request)
+		if e != nil {
+			panic(fmt.Sprintf("Failed to describe regions,because of %v", err))
+		}
+		regionsFilter := strings.Split(*regions, ",")
+		for _, r := range response.Regions.Region {
+			if *regions == "*" {
+				regionList = append(regionList, r.RegionId)
+			} else {
+				for _, prefix := range regionsFilter {
+					if strings.HasPrefix(r.RegionId, prefix) {
+						regionList = append(regionList, r.RegionId)
+					}
+				}
+			}
+		}
+		fmt.Printf("Available regions: %s\n", strings.Join(regionList, ","))
+	} else {
+		regionList = []string{*region}
 	}
 
-	metastore := NewMetaStore(client)
+	allPrices := SortedInstancePrices{}
+	for _, r := range regionList {
+		fmt.Printf("Processing region: %s\n", r)
 
-	metastore.Initialize(*region)
+		client, err := ecsService.NewClientWithAccessKey(r, *accessKeyId, *accessKeySecret)
+		if err != nil {
+			panic(fmt.Sprintf("Failed to create ecs client,because of %v", err))
+		}
 
-	instanceTypes := metastore.FilterInstances(*cpu, *memory, *maxCpu, *maxMemory, *family)
+		metastore := NewMetaStore(client)
 
-	historyPrices := metastore.FetchSpotPrices(instanceTypes, *resolution)
+		metastore.Initialize(r)
 
-	sortedInstancePrices := metastore.SpotPricesAnalysis(historyPrices)
+		instanceTypes := metastore.FilterInstances(*cpu, *memory, *maxCpu, *maxMemory, *family)
 
-	metastore.PrintPriceRank(sortedInstancePrices, *cutoff, *limit)
+		historyPrices := metastore.FetchSpotPrices(instanceTypes, *resolution)
+
+		sortedInstancePrices := metastore.SpotPricesAnalysis(historyPrices)
+
+		allPrices = append(allPrices, sortedInstancePrices...)
+	}
+
+	metastore := NewMetaStore(nil)
+	metastore.PrintPriceRank(allPrices, *cutoff, *limit)
 }
